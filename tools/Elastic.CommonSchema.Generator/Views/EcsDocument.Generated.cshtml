@@ -1,0 +1,65 @@
+@* ReSharper disable once RedundantUsingDirective *@
+@using System
+@inherits Elastic.CommonSchema.Generator.Views.CodeTemplatePage<Elastic.CommonSchema.Generator.Projection.CommonSchemaTypesProjection>
+// Licensed to Elasticsearch B.V under one or more agreements.
+// Elasticsearch B.V licenses this file to you under the Apache 2.0 License.
+// See the LICENSE file in the project root for more information
+
+/*
+IMPORTANT NOTE
+==============
+This file has been generated. 
+If you wish to submit a PR please modify the original csharp file and submit the PR with that change. Thanks!
+*/
+
+// ReSharper disable RedundantUsingDirective
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Linq;
+using System.Net;
+using System.Runtime.Serialization;
+using System.Text.Json.Serialization;
+using Elastic.CommonSchema.Serialization;
+
+namespace Elastic.CommonSchema
+{
+	///<inheritdoc cref="@Model.Base.BaseFieldSet.Name"/>
+	public partial class @Model.Base.Name : @Model.Base.BaseFieldSet.Name 
+	{
+
+		/// <summary>
+		/// Elastic Common Schema version @Model.Version
+		/// </summary>
+		public static string Version => "@Model.Version";
+
+		/// <summary>
+		/// Container for additional metadata against this event.
+		/// <para/>
+		/// When working with unknown fields use <see cref="AssignField"/>. <br/>
+		/// <para> This will try to assign valid ECS fields to their respective property 
+		/// Failing that it will assign strings to <see cref="Labels"/> and everything else to <see cref="Metadata"/> </para>
+		/// </summary>
+		[JsonPropertyName("metadata"), DataMember(Name = "metadata")]
+		[JsonConverter(typeof(MetadataDictionaryConverter))]
+		public MetadataDictionary Metadata { get; set; }
+
+@foreach (var property in Model.Base.EntityProperties)
+{
+<text>
+		///<summary>@property.FullPath</summary>
+		[JsonPropertyName("@property.JsonProperty"), DataMember(Name = "@property.JsonProperty")]
+		public @property.Entity.Name @property.Name { get; set; }
+</text>
+}
+@foreach (var entity in Model.EntityClasses)
+{
+<text>
+		///<summary>@entity.BaseFieldSet.FieldSet.Name</summary>
+		[JsonPropertyName("@entity.BaseFieldSet.FieldSet.Name"), DataMember(Name = "@entity.BaseFieldSet.FieldSet.Name")]
+		public @entity.Name @entity.Name { get; set; }
+</text>
+}
+	}
+}

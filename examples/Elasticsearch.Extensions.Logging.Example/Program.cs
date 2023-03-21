@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Threading.Tasks;
+using Elastic.Channels;
 using Elastic.Elasticsearch.Ephemeral;
 using Elastic.Ingest.Elasticsearch;
+using Elasticsearch.Extensions.Logging.Options;
 using Elasticsearch.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,28 +23,33 @@ namespace Elasticsearch.Extensions.Logging.Example
 			var highLoadUseCase = args.Length == 0 || args[0] != "low";
 			return Host.CreateDefaultBuilder(args)
 				.UseConsoleLifetime()
-				.ConfigureAppConfiguration((hostContext, configurationBuilder) =>
+				.ConfigureAppConfiguration((_, configurationBuilder) =>
 				{
 					configurationBuilder.SetBasePath(AppDomain.CurrentDomain.BaseDirectory);
 				})
-				.ConfigureLogging((hostContext, loggingBuilder) =>
+				.ConfigureLogging((_, loggingBuilder) =>
 				{
 					// removing console logger when showcasing high traffic, too noisy otherwise
 					if (highLoadUseCase)
 						loggingBuilder.ClearProviders();
 
-					loggingBuilder.AddElasticsearch(options => {}, channel =>
+					loggingBuilder.AddElasticsearch(options =>
+					{
+						options.DataStream = new DataStreamNameOptions { DataSet = highLoadUseCase ? "high" : "low" + "load" };
+						options.BootstrapMethod = BootstrapMethod.Silent;
+					}, channel =>
 					{
 						if (highLoadUseCase)
 						{
-							channel.BufferOptions = new ElasticsearchBufferOptions<LogEvent> { ConcurrentConsumers = 4 };
-							channel.PublishRejectionCallback = e => Console.Write("!");
+							channel.BufferOptions = new BufferOptions { ExportMaxConcurrency = 4 };
+							channel.PublishToOutboundChannelFailureCallback = () => Console.Write("!");
+							channel.PublishToInboundChannelFailureCallback = () => Console.Write("!");
 						}
-						channel.ResponseCallback = (r, b) =>
-							Console.WriteLine($"statusCode: {r.ApiCallDetails.HttpStatusCode} items: {b.Count} time since first read: {b.DurationSinceFirstRead}");
+						channel.ExportResponseCallback = (r, b) =>
+							Console.WriteLine($"statusCode: {r.ApiCallDetails.HttpStatusCode} items: {b.Count} time since first write: {b.DurationSinceFirstWrite}");
 					});
 				})
-				.ConfigureServices((hostContext, services) =>
+				.ConfigureServices((_, services) =>
 				{
 					if (args.Length > 0 && args[0] == "low")
 						services.AddHostedService<LowVolumeWorkSimulation>();
@@ -52,7 +59,7 @@ namespace Elasticsearch.Extensions.Logging.Example
 
 		public static async Task Main(string[] args)
 		{
-			using var cluster = new EphemeralCluster("7.8.0");
+			using var cluster = new EphemeralCluster("8.4.0");
 			var client = CreateClient(cluster);
 			if (!(await client.RootNodeInfoAsync()).IsValid)
 				cluster.Start(TimeSpan.FromMinutes(1));

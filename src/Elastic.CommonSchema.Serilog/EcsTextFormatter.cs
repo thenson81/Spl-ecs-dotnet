@@ -3,7 +3,6 @@
 // See the LICENSE file in the project root for more information
 
 using System.IO;
-using System.Text;
 using Serilog.Events;
 using Serilog.Formatting;
 
@@ -16,24 +15,33 @@ namespace Elastic.CommonSchema.Serilog
 		where TEcsDocument : EcsDocument, new()
 	{
 
+		/// <inheritdoc cref="EcsTextFormatterConfiguration{TEcsDocument}"/>
 		protected EcsTextFormatterConfiguration<TEcsDocument> Configuration { get; }
 
+		/// <inheritdoc cref="EcsTextFormatter{TEcsDocument}"/>
 		public EcsTextFormatter() : this(new EcsTextFormatterConfiguration<TEcsDocument>()) { }
 
+		/// <inheritdoc cref="EcsTextFormatter{TEcsDocument}"/>
 		public EcsTextFormatter(EcsTextFormatterConfiguration<TEcsDocument> configuration) =>
 			Configuration = configuration ?? new EcsTextFormatterConfiguration<TEcsDocument>();
 
+		/// <inheritdoc cref="ITextFormatter.Format"/>
 		public virtual void Format(LogEvent logEvent, TextWriter output)
 		{
-			var ecsEvent = LogEventConverter.ConvertToEcs<TEcsDocument>(logEvent, Configuration);
+			var ecsEvent = LogEventConverter.ConvertToEcs(logEvent, Configuration);
 			output.WriteLine(ecsEvent.Serialize());
 		}
 	}
 
+	// ReSharper disable once UnusedType.Global
+	/// <inheritdoc cref="EcsTextFormatter{TEcsDocument}"/>
 	public class EcsTextFormatter : EcsTextFormatter<EcsDocument>
 	{
-		public EcsTextFormatter() : base() {}
+		/// <inheritdoc cref="EcsTextFormatter{TEcsDocument}"/>
+		public EcsTextFormatter() {}
+		/// <inheritdoc cref="EcsTextFormatter{TEcsDocument}"/>
 		public EcsTextFormatter(EcsTextFormatterConfiguration<EcsDocument> configuration) : base(configuration) {}
+		/// <inheritdoc cref="EcsTextFormatter{TEcsDocument}"/>
 		public EcsTextFormatter(EcsTextFormatterConfiguration configuration) : base(configuration) {}
 	}
 }

@@ -1,0 +1,62 @@
+name: release-main
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  DOTNET_VERSION: '6.0.400'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Bootstrap Action Workspace
+      uses: ./.github/workflows/bootstrap
+      
+    - name: Generate local nuget packages
+      run: ./build.sh generatepackages -s true
+
+    - name: Validate *.npkg files that were created
+      run: ./build.sh validatepackages -s true
+
+    - name: Inspect public API change
+      run: ./build.sh generateapichanges -s true
+
+    - name: Prepare feedz.io
+      uses: hashicorp/vault-action@v2.4.2
+      with:
+        url: ${{ secrets.VAULT_ADDR }}
+        method: approle
+        roleId: ${{ secrets.VAULT_ROLE_ID }}
+        secretId: ${{ secrets.VAULT_SECRET_ID }}
+        secrets: |
+          secret/apm-team/ci/elastic-observability-feedz.io apiKey | REPO_API_KEY ;
+          secret/apm-team/ci/elastic-observability-feedz.io url | REPO_API_URL
+
+    - name: Release to feedz.io
+      run: dotnet nuget push 'build/output/*.nupkg' -k ${REPO_API_KEY} -s ${REPO_API_URL} --skip-duplicate --no-symbols
+
+    - name: publish canary packages github package repository
+      shell: bash
+      timeout-minutes: 10
+      continue-on-error: true
+      run: |
+          until dotnet nuget push 'build/output/*.nupkg' -k ${{secrets.GITHUB_TOKEN}} --skip-duplicate --no-symbols -s https://nuget.pkg.github.com/elastic/index.json; do echo "Retrying"; sleep 1; done;
+
+    - if: ${{ failure() }}
+      uses: elastic/apm-pipeline-library/.github/actions/slack-message@current
+      with:
+        url: ${{ secrets.VAULT_ADDR }}
+        roleId: ${{ secrets.VAULT_ROLE_ID }}
+        secretId: ${{ secrets.VAULT_SECRET_ID }}
+        channel: "#apm-agent-dotnet"
+        message: |
+          :large_yellow_circle: [${{ github.repository }}] Snapshot could not be published to feedz.io.
+          Build: (<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here>)

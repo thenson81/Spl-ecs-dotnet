@@ -34,7 +34,7 @@ namespace Elastic.CommonSchema
 		/// <summary>
 		/// Container for additional metadata against this event.
 		/// <para/>
-		/// When working with unknown fields use <see cref="SetAnyField"/>. <br/>
+		/// When working with unknown fields use <see cref="AssignField"/>. <br/>
 		/// <para> This will try to assign valid ECS fields to their respective property 
 		/// Failing that it will assign strings to <see cref="Labels"/> and everything else to <see cref="Metadata"/> </para>
 		/// </summary>

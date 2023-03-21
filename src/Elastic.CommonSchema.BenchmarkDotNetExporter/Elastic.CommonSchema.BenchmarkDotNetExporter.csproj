@@ -1,11 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <Title>Elastic Common Schema (ECS) BenchmarkDotNet exporter</Title>
     <Description>Exports BenchmarkDotNet benchmarks to Elasticsearch using Elastic Common Schema (ECS) format</Description>
     <LangVersion>latest</LangVersion>
-    <IsPackable>False</IsPackable>
+    <IsPackable>True</IsPackable>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Elastic.Ingest.Elasticsearch.CommonSchema\Elastic.Ingest.Elasticsearch.CommonSchema.csproj" />

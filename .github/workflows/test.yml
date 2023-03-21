@@ -1,0 +1,85 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+      - 1.*
+    paths-ignore:
+    - '*.md'
+    - '*.asciidoc'
+    - 'docs/**'
+  pull_request:
+    paths-ignore:
+    - '*.md'
+    - '*.asciidoc'
+    - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  ELASTIC_STACK_VERSION: '8.4.0'
+
+jobs:
+
+  test-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    - name: Bootstrap Action Workspace
+      uses: ./.github/workflows/bootstrap
+            
+    - uses: actions/cache@v3
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/packages.lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+            
+    - uses: actions/cache@v3
+      with:
+        path: ~\AppData\Local\ElasticManaged\elasticsearch-${{ env.ELASTIC_STACK_VERSION }}
+        key: ${{ runner.os }}-elastic-managed-${{ env.ELASTIC_STACK_VERSION }}
+        
+    - name: Build the solution
+      run: build.bat build -s true
+      shell: cmd
+      
+    - name: Run tests
+      run: build.bat test -s true
+      shell: cmd
+       
+    - name: Run integration tests
+      run: build.bat integrate -s true
+      shell: cmd
+      
+    - name: Store test results
+      if: success() || failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: build/output/junit-*.xml
+   
+  test-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Bootstrap Action Workspace
+      uses: ./.github/workflows/bootstrap
+
+    - name: Run release -c false 
+      run: ./build.sh release -c false --token ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Store test results
+      if: success() || failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: build/output/junit-*.xml

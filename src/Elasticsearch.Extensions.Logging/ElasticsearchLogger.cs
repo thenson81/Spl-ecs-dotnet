@@ -5,26 +5,28 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Linq;
 using System.Text;
-using System.Threading;
 using Elastic.CommonSchema;
-using Elastic.Ingest;
+using Elastic.Channels;
 using Elasticsearch.Extensions.Logging.Options;
 using Microsoft.Extensions.Logging;
 
 namespace Elasticsearch.Extensions.Logging
 {
+	/// <summary>
+	/// An <see cref="ILogger"/> implementation that writes logs directly to Elasticsearch
+	/// </summary>
 	public class ElasticsearchLogger : ILogger
 	{
 		private readonly string _categoryName;
-		private readonly IIngestChannel<LogEvent> _channel;
+		private readonly IBufferedChannel<LogEvent> _channel;
 		private readonly ElasticsearchLoggerOptions _options;
 		private readonly IExternalScopeProvider? _scopeProvider;
 
 		internal ElasticsearchLogger(
 			string categoryName,
-			IIngestChannel<LogEvent> channel,
+			IBufferedChannel<LogEvent> channel,
 			ElasticsearchLoggerOptions options,
 			IExternalScopeProvider? scopeProvider
 		)
@@ -35,10 +37,13 @@ namespace Elasticsearch.Extensions.Logging
 			_scopeProvider = scopeProvider;
 		}
 
+		/// <inheritdoc cref="ILogger.BeginScope{TState}"/>
 		public IDisposable? BeginScope<TState>(TState state) => _scopeProvider?.Push(state);
 
+		/// <inheritdoc cref="ILogger.IsEnabled"/>
 		public bool IsEnabled(LogLevel logLevel) => _options.IsEnabled;
 
+		/// <inheritdoc cref="ILogger.Log{TState}"/>
 		public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception exception,
 			Func<TState, Exception, string> formatter
 		)
@@ -61,129 +66,119 @@ namespace Elasticsearch.Extensions.Logging
 			}
 		}
 
-		private static void AddException(Exception exception, LogEvent logEvent)
-		{
-			// Use the full string of the exception, which includes both the outer stack trace and any
-			// inner exceptions and their stack trace. It also includes any additional values that some
-			// exceptions have in ToString() that is not in Message.
-			var stackTrace = exception.ToString();
-			logEvent.Error = new Error { Type = exception.GetType().FullName, Message = exception.Message, StackTrace = stackTrace };
-		}
-
 		private void AddScopeValues(LogEvent logEvent)
 		{
-			if (_options.IncludeScopes)
+			if (!_options.IncludeScopes) return;
+
+			void AddScopeValue<TState>(TState scope, LogEvent log)
 			{
-				_scopeProvider?.ForEachScope((scope, le) =>
-				{
-					le.Labels ??= new Labels();
-					le.Scopes ??= new List<string>();
+				if (scope is null) return;
+				log.Labels ??= new Labels();
+				log.Scopes ??= new List<string>();
 
-					var isFormattedLogValues = false;
-					if (scope is IEnumerable<KeyValuePair<string, object>> scopeValues)
-					{
-						foreach (var kvp in scopeValues)
-						{
-							if (kvp.Key == "{OriginalFormat}")
-							{
-								isFormattedLogValues = true;
-								continue;
-							}
 
-							if (CheckTracingValues(le, kvp)) continue;
+				var scopeValues = (scope as IEnumerable<KeyValuePair<string, object>>)?.ToList();
+				var scopeName = scope as string ?? scope.GetType().Name;
+				if (scopeValues != null && scopeValues.Any(kv=>kv.Key == "{OriginalFormat}"))
+					scopeName = FormatValue(scope);
+				log.Scopes.Add(scopeName);
 
-							le.Labels[kvp.Key] = FormatValue(kvp.Value);
-						}
-					}
+				if (scopeValues == null) return;
 
-					var formattedScope = isFormattedLogValues ? scope.ToString() : FormatValue(scope);
-					le.Scopes.Add(formattedScope);
-				}, logEvent);
+				foreach (var kvp in scopeValues)
+					AssignStateOrScopeLabels(logEvent, kvp);
 			}
+
+			_scopeProvider?.ForEachScope((o, @event) => AddScopeValue(o, @event), logEvent);
 		}
 
 		private void AddStateValues<TState>(TState state, LogEvent logEvent)
 		{
-			if (state is IEnumerable<KeyValuePair<string, object>> stateValues)
-			{
-				foreach (var kvp in stateValues)
-				{
-					if (kvp.Key == "{OriginalFormat}")
-					{
-						logEvent.MessageTemplate = kvp.Value.ToString();
-						continue;
-					}
+			var stateValues = state as IEnumerable<KeyValuePair<string, object>>;
+			if (stateValues == null) return;
 
-					if (CheckTracingValues(logEvent, kvp)) continue;
-
-					logEvent.Labels ??= new Labels();
-					logEvent.Labels[kvp.Key] = FormatValue(kvp.Value);
-				}
-			}
+			foreach (var kvp in stateValues)
+				AssignStateOrScopeLabels(logEvent, kvp);
 		}
 
-		private void AddTracing(LogEvent logEvent)
+		private void AssignStateOrScopeLabels(LogEvent logEvent, KeyValuePair<string, object> kvp)
 		{
-			var activity = Activity.Current;
-
-			if (activity != null)
+			if (kvp.Key == "{OriginalFormat}")
 			{
-				if (activity.IdFormat == ActivityIdFormat.W3C)
-				{
-					// Unique identifier of the trace.
-					// A trace groups multiple events like transactions that belong together. For example, a user request handled by multiple inter-connected services.
-					logEvent.TraceId = activity.TraceId.ToString();
-					logEvent.SpanId = activity.SpanId.ToString();
-				}
-				else
-				{
-					if (activity.RootId != null) logEvent.TraceId = activity.RootId;
-					if (activity.Id != null) logEvent.SpanId = activity.Id;
-				}
+				logEvent.MessageTemplate ??= kvp.Value.ToString();
+				return;
 			}
-			else
+			var value = FormatValue(kvp.Value);
+			if (!AssignKnownHttpKeys(logEvent, kvp.Key, value))
+				logEvent.AssignField(kvp.Key, value);
+		}
+
+		private static bool AssignKnownHttpKeys(LogEvent logEvent, string key, object value)
+		{
+			switch (key)
 			{
-				if (!Trace.CorrelationManager.ActivityId.Equals(Guid.Empty))
-				{
-					logEvent.TraceId = Trace.CorrelationManager.ActivityId.ToString();
-				}
+				case "RequestId" when value is string requestId:
+					logEvent.Http ??= new Http();
+					logEvent.Http.RequestId = requestId;
+					return true;
+				case "RequestPath" when value is string path:
+					logEvent.Url ??= new Url();
+					logEvent.Url.Path = path;
+					return true;
+				// ReSharper disable once UnusedVariable
+				case "Protocol" when value is string protocol:
+					// TODO protocol
+					//logEvent.Http ??= new Http();
+					//logEvent.Http. = requestId;
+					return true;
+				case "Method" when value is string method:
+					logEvent.Http ??= new Http();
+					logEvent.Http.RequestMethod = method;
+					return true;
+				case "ContentType" when value is string contentType:
+					logEvent.Http ??= new Http();
+					logEvent.Http.RequestMimeType = contentType;
+					return true;
+				case "ContentLength" when value is string contentLength:
+					logEvent.Http ??= new Http();
+					logEvent.Http.RequestBytes = long.TryParse(contentLength, out var l) ? l : (long?)null;
+					return true;
+				case "Scheme" when value is string scheme:
+					logEvent.Http ??= new Http();
+					logEvent.Url.Scheme = scheme;
+					return true;
+				case "Host" when value is string host:
+					logEvent.Url ??= new Url();
+					logEvent.Url.Domain = host;
+					return true;
+				case "Path":
+				case "PathBase":
+					//covered by 'RequestPath'
+					return true;
+				case "QueryString" when value is string qs:
+					logEvent.Url ??= new Url();
+					logEvent.Url.Query = qs;
+					return true;
+				default: return false;
 			}
 		}
+
+		private static Agent? DefaultAgent { get; } = EcsDocument.CreateAgent(typeof(ElasticsearchLogger));
 
 		private LogEvent BuildLogEvent<TState>(string categoryName, LogLevel logLevel,
 			EventId eventId, TState state, Exception? exception,
 			Func<TState, Exception, string> formatter
 		)
 		{
-			var logEvent = new LogEvent
-			{
-				Ecs = LogEventToEcsHelper.GetEcs(),
-				Timestamp = ElasticsearchLoggerProvider.LocalDateTimeProvider(),
-				Message = formatter(state, exception!),
-				Log = new Log { Level = LogEventToEcsHelper.GetLogLevelString(logLevel), Logger = categoryName },
-				Event = new Event { Action = eventId.Name, Code = eventId.Id.ToString(), Severity = LogEventToEcsHelper.GetSeverity(logLevel) }
-			};
+			var timestamp = ElasticsearchLoggerProvider.LocalDateTimeProvider();
+			var logEvent = EcsDocument.CreateNewWithDefaults<LogEvent>(timestamp, exception, _options);
 
-			if (exception != null) AddException(exception, logEvent);
-
-			logEvent.Agent = LogEventToEcsHelper.GetAgent();
-			logEvent.Service = LogEventToEcsHelper.GetService();
+			logEvent.Message = formatter(state, exception!);
+			logEvent.Log = new Log { Level = LogEventToEcsHelper.GetLogLevelString(logLevel), Logger = categoryName };
+			logEvent.Event = new Event { Action = eventId.Name, Code = eventId.Id.ToString(), Severity = LogEventToEcsHelper.GetSeverity(logLevel) };
+			logEvent.Agent = DefaultAgent;
 
 			if (_options.Tags != null && _options.Tags.Length > 0) logEvent.Tags = _options.Tags;
-
-			if (_options.IncludeHost) logEvent.Host = LogEventToEcsHelper.GetHost();
-
-			if (_options.IncludeProcess) logEvent.Process = LogEventToEcsHelper.GetProcess();
-
-			if (_options.IncludeUser)
-			{
-				logEvent.User = new User
-				{
-					Id = Thread.CurrentPrincipal?.Identity.Name, Name = Environment.UserName, Domain = Environment.UserDomainName
-				};
-			}
-
-			AddTracing(logEvent);
 
 			if (_options.IncludeScopes) AddScopeValues(logEvent);
 
@@ -191,44 +186,6 @@ namespace Elasticsearch.Extensions.Logging
 			AddStateValues(state, logEvent);
 
 			return logEvent;
-		}
-
-		private bool CheckTracingValues(LogEvent logEvent, KeyValuePair<string, object> kvp)
-		{
-			if (kvp.Key == "span.id")
-			{
-				var value = FormatValue(kvp.Value);
-				if (!string.IsNullOrWhiteSpace(value))
-				{
-					logEvent.SpanId = value;
-				}
-
-				return true;
-			}
-
-			if (kvp.Key == "trace.id")
-			{
-				var value = FormatValue(kvp.Value);
-				if (!string.IsNullOrWhiteSpace(value))
-				{
-					logEvent.TraceId = value;
-				}
-
-				return true;
-			}
-
-			if (kvp.Key == "transaction.id")
-			{
-				var value = FormatValue(kvp.Value);
-				if (!string.IsNullOrWhiteSpace(value))
-				{
-					logEvent.TransactionId = value;
-				}
-
-				return true;
-			}
-
-			return false;
 		}
 
 		private string FormatEnumerable(IEnumerable enumerable, int depth)
@@ -287,26 +244,23 @@ namespace Elasticsearch.Extensions.Logging
 				case DateTime dateTime:
 					if (dateTime.TimeOfDay.Equals(TimeSpan.Zero))
 						return dateTime.ToString("yyyy'-'MM'-'dd");
-					else
-						return dateTime.ToString("o");
+
+					return dateTime.ToString("o");
 				case DateTimeOffset dateTimeOffset:
 					return dateTimeOffset.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss.ffffffzzz");
 				case string s:
 					// since 'string' implements IEnumerable, special case it
 					return s;
 				default:
+					// need to special case dictionary before IEnumerable
 					if (depth < 1 && value is IDictionary<string, object> dictionary)
-					{
-						// need to special case dictionary before IEnumerable
 						return FormatStringDictionary(dictionary, depth);
-					}
-					else if (depth < 1 && value is IEnumerable enumerable)
-					{
-						// if the value implements IEnumerable, build a comma separated string
+
+					// if the value implements IEnumerable, build a comma separated string
+					if (depth < 1 && value is IEnumerable enumerable)
 						return FormatEnumerable(enumerable, depth);
-					}
-					else
-						return value.ToString();
+
+					return value.ToString();
 			}
 		}
 

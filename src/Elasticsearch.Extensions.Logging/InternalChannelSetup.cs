@@ -4,16 +4,18 @@
 
 using System;
 using Elastic.Ingest.Elasticsearch;
-using Elasticsearch.Extensions.Logging.Options;
 
 namespace Elasticsearch.Extensions.Logging
 {
+	/// <inheritdoc cref="IChannelSetup"/>
 	public class ChannelSetup : IChannelSetup
 	{
 		private readonly Action<ElasticsearchChannelOptionsBase<LogEvent>> _configureChannel;
 
+		/// <inheritdoc cref="IChannelSetup"/>
 		public ChannelSetup(Action<ElasticsearchChannelOptionsBase<LogEvent>> configureChannel) => _configureChannel = configureChannel;
 
+		/// <inheritdoc cref="IChannelSetup"/>
 		public void ConfigureChannel(ElasticsearchChannelOptionsBase<LogEvent> channelOptions) =>
 			_configureChannel(channelOptions);
 	}

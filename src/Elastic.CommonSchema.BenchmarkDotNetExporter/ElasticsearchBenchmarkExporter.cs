@@ -11,9 +11,8 @@ using BenchmarkDotNet.Environments;
 using BenchmarkDotNet.Exporters;
 using BenchmarkDotNet.Loggers;
 using BenchmarkDotNet.Reports;
+using Elastic.Channels;
 using Elastic.CommonSchema.BenchmarkDotNetExporter.Domain;
-using Elastic.Ingest;
-using Elastic.Ingest.Elasticsearch;
 using Elastic.Ingest.Elasticsearch.CommonSchema;
 using Elastic.Ingest.Elasticsearch.DataStreams;
 using Elastic.Transport;
@@ -21,11 +20,15 @@ using Elastic.Transport.Products.Elasticsearch;
 
 namespace Elastic.CommonSchema.BenchmarkDotNetExporter
 {
+	/// <summary> Exports benchmark results to Elasticsearch </summary>
 	public class ElasticsearchBenchmarkExporter : ExporterBase
 	{
+		// ReSharper disable once UnusedMember.Global
+		/// <summary> Exports benchmark results to Elasticsearch </summary>
 		public ElasticsearchBenchmarkExporter(string cloudId, string apiKey)
 			: this(new ElasticsearchBenchmarkExporterOptions(cloudId) { ApiKey = apiKey}) { }
 
+		/// <summary> Exports benchmark results to Elasticsearch </summary>
 		public ElasticsearchBenchmarkExporter(ElasticsearchBenchmarkExporterOptions options)
 		{
 			Options = options;
@@ -33,6 +36,8 @@ namespace Elastic.CommonSchema.BenchmarkDotNetExporter
 			Transport = new DefaultHttpTransport<TransportConfiguration>(config);
 		}
 
+		// ReSharper disable once UnusedMember.Global
+		/// <summary> Exports benchmark results to Elasticsearch </summary>
 		public ElasticsearchBenchmarkExporter(ElasticsearchBenchmarkExporterOptions options, Func<ElasticsearchBenchmarkExporterOptions, TransportConfiguration> configure)
 		{
 			Options = options;
@@ -44,23 +49,29 @@ namespace Elastic.CommonSchema.BenchmarkDotNetExporter
 		private ElasticsearchBenchmarkExporterOptions Options { get; }
 
 		// We only log when we cannot write to Elasticsearch
+		/// <inheritdoc cref="ExporterBase.FileExtension"/>
 		protected override string FileExtension => "log";
+		/// <inheritdoc cref="ExporterBase.FileNameSuffix"/>
 		protected override string FileNameSuffix => "-elasticsearch-error";
 
+		/// <inheritdoc cref="ExporterBase.ExportToLog"/>
 		public override void ExportToLog(Summary summary, ILogger logger)
 		{
 			var waitHandle = new CountdownEvent(1);
 
 			var benchmarksCount = summary.Reports.Length;
+			Exception observedException = null;
 			var options = new DataStreamChannelOptions<BenchmarkDocument>(Transport)
 			{
 				DataStream = new DataStreamName("benchmarks", "dotnet", Options.DataStreamNamespace),
-				BufferOptions = new ElasticsearchBufferOptions<BenchmarkDocument>
+				BufferOptions = new BufferOptions
 				{
 					WaitHandle = waitHandle,
-					MaxConsumerBufferSize = benchmarksCount
+					OutboundBufferMaxSize = benchmarksCount,
+					OutboundBufferMaxLifetime = TimeSpan.FromSeconds(5)
 				},
-				ResponseCallback = ((response, statistics) =>
+				ExportExceptionCallback = e => observedException ??= e,
+				ExportResponseCallback = (response, _) =>
 				{
 					var errorItems = response.Items.Where(i => i.Status >= 300).ToList();
 					if (response.TryGetElasticsearchServerError(out var error))
@@ -70,17 +81,22 @@ namespace Elastic.CommonSchema.BenchmarkDotNetExporter
 					foreach (var errorItem in errorItems)
 						logger.WriteError($"Failed to {errorItem.Action} document status: ${errorItem.Status}, error: ${errorItem.Error}");
 
-				})
+				}
 			};
-			var channel = new CommonSchemaChannel<BenchmarkDocument>(options);
-			if (!channel.SetupElasticsearchTemplates()) return;
+			Options.ChannelOptionsCallback?.Invoke(options);
+			var channel = new EcsDataStreamChannel<BenchmarkDocument>(options);
+			if (!channel.BootstrapElasticsearch(Options.BootstrapMethod)) return;
 
 			var benchmarks = CreateBenchmarkDocuments(summary);
-			channel.TryWriteMany(benchmarks);
+			var writeResult = benchmarks.Select(b => channel.TryWrite(b)).All(b => b);
 
-			var waited = waitHandle.Wait(TimeSpan.FromSeconds(10));
-			if (!waited)
-				logger.WriteError($"failed to flush benchmarks within 10second timeout");
+			var completedOnTime = waitHandle.Wait(TimeSpan.FromSeconds(20));
+			if (!completedOnTime)
+			{
+				logger.WriteError($"No flush in 20 seconds, published: {writeResult}, possible error: {observedException?.Message}");
+				if (observedException != null)
+					logger.WriteError(observedException.ToString());
+			}
 		}
 
 		private List<BenchmarkDocument> CreateBenchmarkDocuments(Summary summary)
@@ -156,14 +172,13 @@ namespace Elastic.CommonSchema.BenchmarkDotNetExporter
 						Method = FullNameProvider.GetBenchmarkName(r.BenchmarkCase),
 						Parameters = r.BenchmarkCase.Parameters.PrintInfo,
 					};
-
 					var data = new BenchmarkDocument
 					{
 						Timestamp = DateTime.UtcNow,
 						Host = host,
 						Agent = agent,
 						Event = @event,
-						Benchmark = new BenchmarkData(r.ResultStatistics),
+						Benchmark = new BenchmarkData(r.ResultStatistics, r.Success),
 					};
 
 					if (summary.BenchmarksCases.Any(c => c.Config.HasMemoryDiagnoser()))

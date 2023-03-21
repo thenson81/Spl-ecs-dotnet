@@ -14,6 +14,7 @@ namespace Elastic.Apm.SerilogEnricher
 	/// </summary>
 	public sealed class ElasticApmEnricher : ILogEventEnricher
 	{
+		/// <inheritdoc cref="ILogEventEnricher.Enrich"/>>
 		public void Enrich(LogEvent logEvent, ILogEventPropertyFactory propertyFactory)
 		{
 			if (!Agent.IsConfigured) return;
@@ -25,6 +26,7 @@ namespace Elastic.Apm.SerilogEnricher
 			if (Agent.Config.GlobalLabels != null)
 				logEvent.AddPropertyIfAbsent(propertyFactory.CreateProperty("ElasticApmGlobalLabels", Agent.Config.GlobalLabels));
 
+			if (!Agent.Config.Enabled) return;
 			if (Agent.Tracer is null) return;
 			if (Agent.Tracer.CurrentTransaction is null) return;
 

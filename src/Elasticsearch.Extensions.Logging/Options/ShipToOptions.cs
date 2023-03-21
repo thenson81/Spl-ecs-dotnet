@@ -6,6 +6,9 @@ using System;
 
 namespace Elasticsearch.Extensions.Logging.Options
 {
+	/// <summary>
+	/// Configures where to write Elasticsearch logs to
+	/// </summary>
 	public class ShipToOptions
 	{
 		/// <summary>
@@ -22,13 +25,13 @@ namespace Elasticsearch.Extensions.Logging.Options
 		/// Gets or sets the connection pool type. Default for multiple nodes is <c>Sniffing</c>; other supported values are
 		/// <c>Static</c>, <c>Sticky</c>, or force to <c>SingleNode</c>.
 		/// </summary>
-		public ConnectionPoolType ConnectionPoolType { get; set; }
+		public NodePoolType NodePoolType { get; set; }
 
 		/// <summary>
 		/// Gets or sets the URIs of the Elasticsearch nodes in the connection pool. If not specified the default single node
 		/// "http://localhost:9200" is used.
 		/// </summary>
-		public Uri[] NodeUris { get; set; } = new Uri[0];
+		public Uri[]? NodeUris { get; set; }
 
 		/// <summary>
 		/// Gets or sets the password, where connection pool type is Cloud, and authenticating via username/password.

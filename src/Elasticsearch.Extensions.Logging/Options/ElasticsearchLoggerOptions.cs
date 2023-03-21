@@ -1,6 +1,13 @@
+using Elastic.CommonSchema;
+using Elastic.Ingest.Elasticsearch;
+using Elastic.Transport;
+
 namespace Elasticsearch.Extensions.Logging.Options
 {
-	public class ElasticsearchLoggerOptions
+	/// <summary>
+	/// Provide options to <see cref="ElasticsearchLogger"/> to control how data gets written to Elasticsearch
+	/// </summary>
+	public class ElasticsearchLoggerOptions : IEcsDocumentCreationOptions
 	{
 		/// <summary>
 		/// Gets or sets a flag indicating whether host details should be included in the message. Defaults to <c>true</c>.
@@ -28,18 +35,23 @@ namespace Elasticsearch.Extensions.Logging.Options
 		public DataStreamNameOptions? DataStream { get; set; }
 
 		/// <summary>
+		/// Indicates how to bootstrap the target <see cref="DataStream"/> or <see cref="Index"/> automatically.
+		/// The default is to do no bootstrapping, assuming the target <see cref="DataStream"/> or <see cref="Index"/> is already properly setup.
+		/// </summary>
+		public BootstrapMethod BootstrapMethod { get; set; } = BootstrapMethod.None;
+
+		/// <summary>
 		/// The index to log into, if this is not set the logger integration will assume it will write into datastreams <see cref="DataStream"/>.
 		/// <para>
 		/// If both <see cref="Index"/> and <see cref="DataStream"/> are set <see cref="DataStream"/> takes precedence.
 		/// </para>
 		/// <para>
 		/// If neither <see cref="Index"/> and <see cref="DataStream"/> are set a default for <see cref="DataStream"/> will be assumed namely
-		/// <c>logs-generic-default</c>.
+		/// <c>logs-dotnet-default</c>.
 		/// </para>
 		/// </summary>
 		public IndexNameOptions? Index { get; set; }
 
-		//TODO index patterns are more complex then this, ILM, write alias, buffer tier, datastreams
 		/// <summary>
 		/// Gets or sets flag indicating if the logger is enabled. Default is <c>true</c>.
 		/// </summary>
@@ -59,6 +71,12 @@ namespace Elasticsearch.Extensions.Logging.Options
 		/// Gets or sets additional tags to pass in the message, for example you can tag with the environment name ('Development',
 		/// 'Production', etc).
 		/// </summary>
-		public string[] Tags { get; set; } = new string[0];
+		public string[]? Tags { get; set; }
+
+		/// <summary>
+		/// Allows the direct setting of a <see cref="HttpTransport{TConfiguration}"/> to be used to communicate with Elasticsearch.
+		/// <para>If set takes precedence over <see cref="ShipTo"/> </para>
+		/// </summary>
+		public HttpTransport? Transport { get; set; }
 	}
 }
