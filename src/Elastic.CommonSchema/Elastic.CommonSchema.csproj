@@ -6,6 +6,7 @@
     <Description>Maps Elastic Common Schema (ECS) to .NET types including (de)serialization using System.Text.Json</Description>
     <LangVersion>latest</LangVersion>
     <IsPackable>True</IsPackable>
+    <Platforms>AnyCPU;x64;x86</Platforms>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
